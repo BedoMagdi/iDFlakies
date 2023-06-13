@@ -36,12 +36,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -227,7 +222,9 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
         // If the maven project has both JUnit 4 and JUnit 5 tests, two runners will
         // be returned
         List<Runner> runners = RunnerFactory.allFrom(mavenProject);
-        runners = removeZombieRunners(runners, mavenProject);
+        //runners = removeZombieRunners(runners, mavenProject);
+
+        Logger.getGlobal().log(Level.INFO, String.format("runners.size() == %s", runners.size()));
 
         if (runners.size() != 1) {
             if (forceJUnit4) {
@@ -260,16 +257,33 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
                         "Module is not using a supported test framework (probably not JUnit), " +
                         "or there is no test.";
                 } else {
+                    //edited here. try to use junit5 runner if it exists
+                    Runner nrunner = null;
+                    for (Runner runner : runners) {
+                        Logger.getGlobal().log(Level.INFO, String.format("runner type = %s", runner.framework().toString()));
+                        if (runner.framework().toString() == "JUnit5") {
+                            nrunner = runner;
+                            Logger.getGlobal().log(Level.INFO, "matched junit5 runner");
+                            break;
+                        }
+                    }
+                    if (nrunner != null) {
+                        runners = new ArrayList<>(Arrays.asList(nrunner));
+                    }else{
+                        errorMsg =
+                                "This project contains both JUnit 4 and JUnit 5 tests, which currently"
+                                        + " is not supported by iDFlakies";
+
+                        Logger.getGlobal().log(Level.INFO, errorMsg);
+                        logger.writeError(errorMsg);
+                        return;
+                    }
                     // more than one runner, currently is not supported.
-                    errorMsg =
-                        "This project contains both JUnit 4 and JUnit 5 tests, which currently"
-                        + " is not supported by iDFlakies";
                 }
-                Logger.getGlobal().log(Level.INFO, errorMsg);
-                logger.writeError(errorMsg);
-                return;
+
             }
         }
+        Logger.getGlobal().log(Level.INFO,"made a decission");
 
         if (this.runner == null) {
             this.runner = InstrumentingSmartRunner.fromRunner(runners.get(0), mavenProject.getBasedir());
@@ -287,8 +301,9 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
 
         if (!tests.isEmpty()) {
             Files.createDirectories(outputPath);
-            Files.write(PathManager.originalOrderPath(), String.join(System.lineSeparator(), getOriginalOrder(mavenProject, this.runner.framework(), true)).getBytes());
-            Files.write(PathManager.selectedTestPath(), String.join(System.lineSeparator(), tests).getBytes());
+            //Files.write(PathManager.originalOrderPath(), String.join(System.lineSeparator(), getOriginalOrder(mavenProject, this.runner.framework(), true)).getBytes());
+            Files.write(PathManager.originalOrderPath(), String.join(System.lineSeparator(), tests).getBytes());
+            Logger.getGlobal().log(Level.INFO, String.format("# of tests passed to detector %s", tests.size()));
             final Detector detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds);
             Logger.getGlobal().log(Level.INFO, "Created dependent test detector (" + detector.getClass() + ").");
             detector.writeTo(outputPath);
@@ -307,7 +322,7 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
             Logger.getGlobal().log(Level.INFO, "Locating tests...");
             try {
 		        locateTestList.put(id, OperationTime.runOperation(() -> {
-                    return new ArrayList<String>(JavaConverters.bufferAsJavaList(TestLocator.tests(project, testFramework).toBuffer()));
+                    return new ArrayList<String>(JavaConverters.<String>bufferAsJavaList(TestLocator.tests(project, testFramework).<String>toBuffer()));
                 }, (tests, time) -> {
                     Logger.getGlobal().log(Level.INFO, "Located " + tests.size() + " tests. Time taken: " + time.elapsedSeconds() + " seconds");
                     return tests;
@@ -329,31 +344,62 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
             final MavenProject project,
             TestFramework testFramework,
             boolean ignoreExisting) throws IOException {
+        Logger.getGlobal().log(Level.INFO, String.format("testFramework is %s", testFramework));
         if (!Files.exists(PathManager.originalOrderPath()) || ignoreExisting) {
             Logger.getGlobal().log(Level.INFO, "Getting original order by parsing logs. ignoreExisting set to: " + ignoreExisting);
 
             try {
                 final Path surefireReportsPath = Paths.get(project.getBuild().getDirectory()).resolve("surefire-reports");
                 final Path mvnTestLog = PathManager.testLog();
+                Logger.getGlobal().log(Level.INFO, String.format("mvnTestLog exists -> %s", Files.exists(mvnTestLog)));
+                //Logger.getGlobal().log(Level.INFO, String.format("mvnTestLog exists -> %s", mvnTestLog));
+                Logger.getGlobal().log(Level.INFO, String.format("surefireReportsPath exists -> %s", Files.exists(surefireReportsPath)));
+                //Logger.getGlobal().log(Level.INFO, String.format("surefireReportsPath exists -> %s", surefireReportsPath));
                 if (Files.exists(mvnTestLog) && Files.exists(surefireReportsPath)) {
+                    Logger.getGlobal().log(Level.INFO, String.format("mvnTestLog and surefireReportsPath exist"));
                     final List<TestClassData> testClassData = new GetMavenTestOrder(surefireReportsPath, mvnTestLog).testClassDataList();
 
                     final List<String> tests = new ArrayList<>();
 
                     String delimiter = testFramework.getDelimiter();
 
+                    int count = 1;
+
+                    HashSet<String> seen = new HashSet<>();
                     for (final TestClassData classData : testClassData) {
                         for (final String testName : classData.testNames) {
-                            tests.add(classData.className + delimiter + testName);
+                            String testNameFixed = testName;
+                            //int openingBracketIndex = testName.indexOf("[");
+                            int openingparenthesisIndex = testName.indexOf("(");
+                            if (openingparenthesisIndex != -1) {
+                                testNameFixed = testNameFixed.substring(0, openingparenthesisIndex);
+                            }
+
+                            String testStr = classData.className + delimiter + testNameFixed;
+
+                            //tests.add(testStr);
+
+                            if(!seen.contains(testStr)){
+                                tests.add(testStr);
+                                seen.add(testStr);
+                            }
+
+
+                            if(count == 1 && testName.contains("[") && testName.contains("]")){
+                                count ++;
+                                Logger.getGlobal().log(Level.INFO, String.format("\n\nparamterized test format example -> %s\ntestNameFixed -> %s\n", classData.className + delimiter + testName, testNameFixed));
+                            }
                         }
                     }
-
+                    Logger.getGlobal().log(Level.INFO, String.format("# of tests returned %s", tests.size()));
                     return tests;
                 } else {
+                    Logger.getGlobal().log(Level.INFO, String.format("Calling locating tests"));
                     return locateTests(project, testFramework);
                 }
             } catch (Exception ignored) {}
 
+            Logger.getGlobal().log(Level.INFO, String.format("Calling locating tests after the catch"));
             return locateTests(project, testFramework);
         } else {
             return Files.readAllLines(PathManager.originalOrderPath());

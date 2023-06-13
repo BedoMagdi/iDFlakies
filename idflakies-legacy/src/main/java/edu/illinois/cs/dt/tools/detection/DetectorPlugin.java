@@ -208,7 +208,7 @@ public class DetectorPlugin extends TestPlugin {
         // If the maven project has both JUnit 4 and JUnit 5 tests, two runners will
         // be returned
         List<Runner> runners = RunnerFactory.allFrom(project);
-        runners = removeZombieRunners(runners, project);
+        //runners = removeZombieRunners(runners, project);
 
         if (runners.size() != 1) {
             if (forceJUnit4) {

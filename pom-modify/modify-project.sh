@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ARTIFACT_ID="idflakies-maven-plugin"
-ARTIFACT_VERSION="2.0.0"
+ARTIFACT_VERSION="2.0.1-SNAPSHOT"
 
 if [[ $1 == "" ]]; then
     echo "arg1 - the path to the project, where high-level pom.xml is"

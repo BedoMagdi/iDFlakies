@@ -493,7 +493,7 @@ public class Analysis extends StandardMain {
 
         return new TestRunResult("the id is unimportant and should never be referenced",
                 originalOrder,
-                testOutcomes);
+                testOutcomes, 0.0);
     }
 
     private void insertDetectionRound(final String name, final String roundType,
